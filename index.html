@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AeroFlow Lab - Interactive Aerodynamic Wind Tunnel</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app-container">
+    <!-- Header Telemetry Bar -->
+    <header class="telemetry-header">
+      <div class="brand-section">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M2 12h20M2 6c7 0 11 4 20 4M2 18c7 0 11-4 20-4" />
+        </svg>
+        <div class="brand-title">AERO<span>FLOW</span> LAB</div>
+        <div class="brand-tag">v1.0.0 &bull; EULERIAN NAVIER-STOKES</div>
+      </div>
+
+      <div class="quick-telemetry">
+        <div class="telemetry-item">
+          <span class="tel-label">Reynolds (Re)</span>
+          <span class="tel-value" id="tel-re">14,200</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="tel-label">Air Velocity</span>
+          <span class="tel-value" id="tel-speed">39 m/s</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="tel-label">Mach Number</span>
+          <span class="tel-value" id="tel-mach">M 0.11</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="stall-badge" id="tel-stall">LAMINAR FLOW</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Viewport Area -->
+    <main class="viewport-area">
+      <!-- Main Wind Tunnel Canvas -->
+      <canvas id="wind-canvas"></canvas>
+
+      <!-- Floating HUD Telemetry Card -->
+      <div class="hud-overlay">
+        <div class="hud-card">
+          <div class="card-title">
+            <span>AERODYNAMIC TELEMETRY</span>
+            <span id="hud-fps" style="color: var(--accent-cyan);">60 FPS</span>
+          </div>
+          <div class="aero-matrix">
+            <div class="matrix-metric">
+              <span class="matrix-label">Lift Coeff (CL)</span>
+              <span class="matrix-val highlight" id="hud-cl">0.420</span>
+            </div>
+            <div class="matrix-metric">
+              <span class="matrix-label">Drag Coeff (CD)</span>
+              <span class="matrix-val warn" id="hud-cd">0.038</span>
+            </div>
+            <div class="matrix-metric">
+              <span class="matrix-label">L/D Efficiency</span>
+              <span class="matrix-val" id="hud-ld">11.1</span>
+            </div>
+            <div class="matrix-metric">
+              <span class="matrix-label">Vortex Shedding</span>
+              <span class="matrix-val" id="hud-shed">140 Hz</span>
+            </div>
+          </div>
+          <div style="margin-top: 10px;">
+            <span class="matrix-label">FORCE HISTORY (CL cyan / CD amber)</span>
+            <canvas id="polar-chart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls Sidebar -->
+      <aside class="controls-sidebar">
+        <!-- Airfoil & Obstacle Presets -->
+        <div>
+          <div class="section-label">AEROFOIL / OBSTACLE MODEL</div>
+          <div class="preset-grid">
+            <button class="btn-preset active" data-preset="naca0012">NACA 0012</button>
+            <button class="btn-preset" data-preset="cambered">NACA 4412</button>
+            <button class="btn-preset" data-preset="cylinder">Cylinder</button>
+            <button class="btn-preset" data-preset="f1wing">F1 Wing</button>
+            <button class="btn-preset" data-preset="wedge">Sharp Wedge</button>
+            <button class="btn-preset" data-preset="flatplate">Flat Plate</button>
+            <button class="btn-preset" data-preset="custom" style="grid-column: span 2;">Custom Freehand Draw</button>
+          </div>
+        </div>
+
+        <!-- Visualization Modes -->
+        <div>
+          <div class="section-label">VISUALIZATION MODE</div>
+          <div class="view-modes">
+            <button class="btn-mode active" data-mode="smoke">
+              <span>Wind Tunnel Smoke</span>
+              <small style="opacity: 0.6;">Laser Rake</small>
+            </button>
+            <button class="btn-mode" data-mode="pressure">
+              <span>Pressure Gradient</span>
+              <small style="opacity: 0.6;">Bernoulli Field</small>
+            </button>
+            <button class="btn-mode" data-mode="vorticity">
+              <span>Vorticity & Cores</span>
+              <small style="opacity: 0.6;">Curl Field</small>
+            </button>
+            <button class="btn-mode" data-mode="schlieren">
+              <span>Optical Schlieren</span>
+              <small style="opacity: 0.6;">Shadowgraph</small>
+            </button>
+            <button class="btn-mode" data-mode="vectors">
+              <span>Velocity Vectors</span>
+              <small style="opacity: 0.6;">Vector Grid</small>
+            </button>
+          </div>
+        </div>
+
+        <!-- Sliders & Parameters -->
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="section-label">TUNNEL PARAMETERS</div>
+
+          <div class="slider-group">
+            <div class="slider-header">
+              <span>Angle of Attack (&alpha;)</span>
+              <span class="slider-val" id="val-aoa">+6.0&deg;</span>
+            </div>
+            <input type="range" id="slider-aoa" min="-25" max="25" step="0.5" value="6.0">
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-header">
+              <span>Inflow Airspeed</span>
+              <span class="slider-val" id="val-velocity">38 m/s</span>
+            </div>
+            <input type="range" id="slider-velocity" min="0.4" max="3.2" step="0.1" value="1.6">
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-header">
+              <span>Kinematic Viscosity (&nu;)</span>
+              <span class="slider-val" id="val-visc">1.0e-4</span>
+            </div>
+            <input type="range" id="slider-visc" min="0.00002" max="0.001" step="0.00002" value="0.0001">
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-header">
+              <span>Vorticity Confinement</span>
+              <span class="slider-val" id="val-vort">0.35</span>
+            </div>
+            <input type="range" id="slider-vort" min="0.0" max="0.8" step="0.05" value="0.35">
+          </div>
+        </div>
+
+        <!-- Simulation Actions -->
+        <div>
+          <div class="section-label">SIMULATION CONTROLS</div>
+          <div class="action-grid">
+            <button class="btn-action primary" id="btn-pause">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              Jeda
+            </button>
+            <button class="btn-action" id="btn-audio">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+              Audio Hening
+            </button>
+            <button class="btn-action" id="btn-reset">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Reset Arus
+            </button>
+            <button class="btn-action" id="btn-snapshot">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              Snapshot PNG
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Bottom Hint Bar -->
+      <div class="bottom-hints">
+        <span><kbd>Drag</kbd> Geser Posisi Airfoil</span>
+        <span><kbd>Klik Kanan</kbd> Hapus Shape (Mode Gambar)</span>
+        <span><kbd>Space</kbd> Jeda / Lanjut</span>
+        <span><kbd>M</kbd> Audio Synthesizer</span>
+        <span><kbd>1 - 6</kbd> Ganti Preset</span>
+        <span><kbd>R</kbd> Reset Aliran Udara</span>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
