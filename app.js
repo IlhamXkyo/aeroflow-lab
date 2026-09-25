@@ -1,5 +1,5 @@
 /**
- * AeroFlow Lab - Main Interactive Application & Telemetry Canvas Engine
+ * AeroFlow Lab - Professional Aerodynamics Workstation & Canvas Engine
  */
 
 import { AerodynamicSolver } from './physics.js';
@@ -19,10 +19,9 @@ class App {
 
     this.isRunning = true;
     this.viewMode = 'smoke'; // 'smoke', 'pressure', 'vorticity', 'schlieren', 'vectors'
-    this.drawMode = false;
     this.isDraggingObstacle = false;
+    this.isDraggingPitchHandle = false;
     this.isMouseDown = false;
-    this.dragStart = { x: 0, y: 0 };
 
     // Offscreen buffer for fast pixel rendering of fields
     this.offscreenCanvas = document.createElement('canvas');
@@ -31,12 +30,15 @@ class App {
     this.offscreenCtx = this.offscreenCanvas.getContext('2d');
     this.imgData = this.offscreenCtx.createImageData(this.solver.nx, this.solver.ny);
 
+    // Surface wool tufts for boundary layer flow visualization
+    this.tufts = [];
+    this.initTufts();
+
     // Telemetry history for mini-chart
-    this.clHistory = new Array(80).fill(0);
-    this.cdHistory = new Array(80).fill(0);
+    this.clHistory = new Array(70).fill(0);
+    this.cdHistory = new Array(70).fill(0);
 
     // Frame timing & FPS
-    this.lastFrameTime = performance.now();
     this.fps = 60;
     this.frameCount = 0;
     this.fpsTimer = performance.now();
@@ -49,14 +51,25 @@ class App {
     requestAnimationFrame((t) => this.loop(t));
   }
 
+  initTufts() {
+    this.tufts = [];
+    for (let i = 0; i < 8; i++) {
+      this.tufts.push({
+        s: 0.12 + i * 0.11, // position along chord (0 to 1)
+        angle: 0,
+        flutter: 0
+      });
+    }
+  }
+
   initCanvasSize() {
     const rect = this.canvas.parentElement.getBoundingClientRect();
     this.canvas.width = rect.width;
     this.canvas.height = rect.height;
 
     if (this.chartCanvas) {
-      this.chartCanvas.width = this.chartCanvas.clientWidth || 240;
-      this.chartCanvas.height = 60;
+      this.chartCanvas.width = this.chartCanvas.clientWidth || 280;
+      this.chartCanvas.height = 64;
     }
   }
 
@@ -65,22 +78,22 @@ class App {
       this.initCanvasSize();
     });
 
-    // Preset buttons
-    const presetBtns = document.querySelectorAll('.btn-preset');
-    presetBtns.forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        presetBtns.forEach((b) => b.classList.remove('active'));
+    // Geometry Preset buttons
+    const geomBtns = document.querySelectorAll('.btn-geom');
+    geomBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        geomBtns.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         const preset = btn.dataset.preset;
         this.selectPreset(preset);
       });
     });
 
-    // Mode buttons
-    const modeBtns = document.querySelectorAll('.btn-mode');
-    modeBtns.forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        modeBtns.forEach((b) => b.classList.remove('active'));
+    // View Mode Switcher Tabs
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    tabBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        tabBtns.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         this.viewMode = btn.dataset.mode;
       });
@@ -94,6 +107,7 @@ class App {
         const val = parseFloat(e.target.value);
         if (aoaVal) aoaVal.textContent = `${val > 0 ? '+' : ''}${val.toFixed(1)}°`;
         this.solver.setAngle(val);
+        this.updateWatermark();
       });
     }
 
@@ -103,18 +117,20 @@ class App {
     if (velSlider) {
       velSlider.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
-        if (velVal) velVal.textContent = `${(val * 24).toFixed(0)} m/s`;
+        const speedMs = val * 24.0;
+        if (velVal) velVal.textContent = `${speedMs.toFixed(1)} m/s`;
         this.solver.setInflow(val);
+        this.updateWatermark();
       });
     }
 
-    // Reynolds / Viscosity slider
-    const reSlider = document.getElementById('slider-visc');
-    const reVal = document.getElementById('val-visc');
-    if (reSlider) {
-      reSlider.addEventListener('input', (e) => {
+    // Viscosity slider
+    const viscSlider = document.getElementById('slider-visc');
+    const viscVal = document.getElementById('val-visc');
+    if (viscSlider) {
+      viscSlider.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
-        if (reVal) reVal.textContent = val.toExponential(1);
+        if (viscVal) viscVal.textContent = val.toExponential(1);
         this.solver.setViscosity(val);
       });
     }
@@ -136,8 +152,8 @@ class App {
       btnPause.addEventListener('click', () => {
         this.isRunning = !this.isRunning;
         btnPause.innerHTML = this.isRunning
-          ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Jeda`
-          : `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Lanjut`;
+          ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause`
+          : `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume`;
       });
     }
 
@@ -146,14 +162,14 @@ class App {
     if (btnAudio) {
       btnAudio.addEventListener('click', () => {
         const active = this.acoustics.toggleMute();
-        btnAudio.classList.toggle('audio-active', active);
+        btnAudio.classList.toggle('audio-on', active);
         btnAudio.innerHTML = active
-          ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg> Audio Nyala`
-          : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg> Audio Hening`;
+          ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg> Acoustics On`
+          : `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg> Acoustics Off`;
       });
     }
 
-    // Reset button
+    // Reset flow button
     const btnReset = document.getElementById('btn-reset');
     if (btnReset) {
       btnReset.addEventListener('click', () => {
@@ -161,7 +177,7 @@ class App {
       });
     }
 
-    // Snapshot Export button
+    // Snapshot button
     const btnSnapshot = document.getElementById('btn-snapshot');
     if (btnSnapshot) {
       btnSnapshot.addEventListener('click', () => {
@@ -169,7 +185,7 @@ class App {
       });
     }
 
-    // Canvas Mouse & Touch Interactivity
+    // Direct Canvas Manipulation
     const getGridPos = (clientX, clientY) => {
       const rect = this.canvas.getBoundingClientRect();
       const x = ((clientX - rect.left) / rect.width) * this.solver.nx;
@@ -187,18 +203,28 @@ class App {
         return;
       }
 
-      // Check if clicking near obstacle center to drag
-      const dx = pos.x - this.solver.obstacleX;
-      const dy = pos.y - this.solver.obstacleY;
-      if (Math.sqrt(dx * dx + dy * dy) < this.solver.chordLength * 0.7) {
+      // Check if clicking near the trailing edge handle to rotate AoA
+      const rad = (this.solver.angleDegrees * Math.PI) / 180.0;
+      const hx = this.solver.obstacleX + Math.cos(rad) * this.solver.chordLength;
+      const hy = this.solver.obstacleY + Math.sin(rad) * this.solver.chordLength;
+      const distHandle = Math.hypot(pos.x - hx, pos.y - hy);
+
+      if (distHandle < 8.0) {
+        this.isDraggingPitchHandle = true;
+        return;
+      }
+
+      // Otherwise check if dragging obstacle body
+      const distBody = Math.hypot(pos.x - this.solver.obstacleX, pos.y - this.solver.obstacleY);
+      if (distBody < this.solver.chordLength * 0.75) {
         this.isDraggingObstacle = true;
-        this.dragStart = { x: pos.x, y: pos.y };
       }
     });
 
     window.addEventListener('mouseup', () => {
       this.isMouseDown = false;
       this.isDraggingObstacle = false;
+      this.isDraggingPitchHandle = false;
     });
 
     this.canvas.addEventListener('mousemove', (e) => {
@@ -207,9 +233,22 @@ class App {
       if (this.isMouseDown && this.solver.obstacleType === 'custom') {
         const isRightClick = e.buttons === 2;
         this.solver.paintSolidCircle(pos.x, pos.y, 4.0, !isRightClick);
+      } else if (this.isDraggingPitchHandle) {
+        const dx = pos.x - this.solver.obstacleX;
+        const dy = pos.y - this.solver.obstacleY;
+        const angleRad = Math.atan2(dy, dx);
+        let angleDeg = (angleRad * 180.0) / Math.PI;
+        angleDeg = Math.max(-25, Math.min(25, angleDeg));
+
+        this.solver.setAngle(angleDeg);
+        const aoaSlider = document.getElementById('slider-aoa');
+        const aoaVal = document.getElementById('val-aoa');
+        if (aoaSlider) aoaSlider.value = angleDeg.toFixed(1);
+        if (aoaVal) aoaVal.textContent = `${angleDeg > 0 ? '+' : ''}${angleDeg.toFixed(1)}°`;
+        this.updateWatermark();
       } else if (this.isDraggingObstacle) {
-        this.solver.obstacleX = Math.max(10, Math.min(this.solver.nx - 40, Math.round(pos.x)));
-        this.solver.obstacleY = Math.max(10, Math.min(this.solver.ny - 10, Math.round(pos.y)));
+        this.solver.obstacleX = Math.max(12, Math.min(this.solver.nx - 45, Math.round(pos.x)));
+        this.solver.obstacleY = Math.max(12, Math.min(this.solver.ny - 12, Math.round(pos.y)));
         this.solver.rebuildObstacle();
       }
     });
@@ -218,7 +257,7 @@ class App {
       e.preventDefault();
     });
 
-    // Touch events for mobile/tablet
+    // Touch support
     this.canvas.addEventListener('touchstart', (e) => {
       if (e.touches.length > 0) {
         this.isMouseDown = true;
@@ -237,8 +276,8 @@ class App {
         if (this.solver.obstacleType === 'custom') {
           this.solver.paintSolidCircle(pos.x, pos.y, 4.0, true);
         } else if (this.isDraggingObstacle) {
-          this.solver.obstacleX = Math.max(10, Math.min(this.solver.nx - 40, Math.round(pos.x)));
-          this.solver.obstacleY = Math.max(10, Math.min(this.solver.ny - 10, Math.round(pos.y)));
+          this.solver.obstacleX = Math.max(12, Math.min(this.solver.nx - 45, Math.round(pos.x)));
+          this.solver.obstacleY = Math.max(12, Math.min(this.solver.ny - 12, Math.round(pos.y)));
           this.solver.rebuildObstacle();
         }
       }
@@ -249,7 +288,7 @@ class App {
       this.isDraggingObstacle = false;
     });
 
-    // Keyboard Shortcuts
+    // Keyboard shortcuts
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') {
         e.preventDefault();
@@ -261,25 +300,38 @@ class App {
       } else if (e.code === 'KeyC') {
         this.solver.clearSolid();
         this.selectPreset('custom');
-      } else if (e.key >= '1' && e.key <= '6') {
-        const presets = ['naca0012', 'cambered', 'cylinder', 'f1wing', 'wedge', 'flatplate'];
-        const p = presets[parseInt(e.key, 10) - 1];
-        if (p) {
-          const btn = document.querySelector(`[data-preset="${p}"]`);
-          if (btn) btn.click();
-        }
       }
     });
   }
 
   selectPreset(preset) {
     this.solver.obstacleType = preset;
-    if (preset === 'custom') {
-      // Keep canvas as is for drawing
-    } else {
+    if (preset !== 'custom') {
       this.solver.rebuildObstacle();
       this.solver.resetFlow();
     }
+    this.updateWatermark();
+  }
+
+  updateWatermark() {
+    const names = {
+      naca0012: 'NACA 0012',
+      cambered: 'NACA 4412',
+      cylinder: 'Circular Cylinder',
+      f1wing: 'F1 Rear Wing',
+      wedge: 'Supersonic Wedge',
+      flatplate: 'Flat Plate',
+      custom: 'Custom Pen'
+    };
+
+    const bModel = document.getElementById('badge-model');
+    if (bModel) bModel.textContent = names[this.solver.obstacleType] || this.solver.obstacleType;
+
+    const bAoa = document.getElementById('badge-aoa');
+    if (bAoa) bAoa.textContent = `${this.solver.angleDegrees > 0 ? '+' : ''}${this.solver.angleDegrees.toFixed(1)}°`;
+
+    const bSpeed = document.getElementById('badge-speed');
+    if (bSpeed) bSpeed.textContent = `${(this.solver.inflowVelocity * 24.0).toFixed(1)} m/s`;
   }
 
   exportSnapshot() {
@@ -292,45 +344,43 @@ class App {
   updateUI() {
     const s = this.solver;
 
-    // Header Quick Telemetry
-    const reEl = document.getElementById('tel-re');
+    // Telemetry Table updates
+    const clEl = document.getElementById('hud-cl');
+    if (clEl) clEl.textContent = s.cl.toFixed(3);
+
+    const cdEl = document.getElementById('hud-cd');
+    if (cdEl) cdEl.textContent = s.cd.toFixed(3);
+
+    const ldEl = document.getElementById('hud-ld');
+    if (ldEl) ldEl.textContent = s.ldRatio.toFixed(1);
+
+    const reEl = document.getElementById('hud-re');
     if (reEl) reEl.textContent = s.reynolds.toLocaleString();
 
-    const speedEl = document.getElementById('tel-speed');
-    if (speedEl) speedEl.textContent = `${(s.inflowVelocity * 24.5).toFixed(0)} m/s`;
-
-    const machEl = document.getElementById('tel-mach');
+    const machEl = document.getElementById('hud-mach');
     if (machEl) {
-      const mach = (s.inflowVelocity * 24.5) / 340.0;
+      const mach = (s.inflowVelocity * 24.0) / 340.0;
       machEl.textContent = `M ${mach.toFixed(2)}`;
     }
 
-    const stallEl = document.getElementById('tel-stall');
+    const shedEl = document.getElementById('hud-shed');
+    if (shedEl) shedEl.textContent = `${s.vortexSheddingFreq.toFixed(0)} Hz`;
+
+    // Stall Badge
+    const stallEl = document.getElementById('flow-state-badge');
     if (stallEl) {
       if (s.isStalled) {
-        stallEl.textContent = 'STALL DETECTED';
-        stallEl.className = 'stall-badge stalled';
+        stallEl.textContent = 'BOUNDARY SEPARATION / STALL';
+        stallEl.className = 'flow-state-badge stalled';
       } else {
-        stallEl.textContent = 'LAMINAR FLOW';
-        stallEl.className = 'stall-badge';
+        stallEl.textContent = 'ATTACHED LAMINAR FLOW';
+        stallEl.className = 'flow-state-badge';
       }
     }
 
-    // Side HUD Matrix
-    const clVal = document.getElementById('hud-cl');
-    if (clVal) clVal.textContent = s.cl.toFixed(3);
-
-    const cdVal = document.getElementById('hud-cd');
-    if (cdVal) cdVal.textContent = s.cd.toFixed(3);
-
-    const ldVal = document.getElementById('hud-ld');
-    if (ldVal) ldVal.textContent = s.ldRatio.toFixed(1);
-
-    const shedVal = document.getElementById('hud-shed');
-    if (shedVal) shedVal.textContent = `${s.vortexSheddingFreq.toFixed(0)} Hz`;
-
-    const fpsEl = document.getElementById('hud-fps');
-    if (fpsEl) fpsEl.textContent = `${this.fps} FPS`;
+    // Status bar FPS
+    const fpsEl = document.getElementById('status-fps');
+    if (fpsEl) fpsEl.textContent = `${this.fps}`;
 
     // Push history for chart
     this.clHistory.shift();
@@ -350,50 +400,41 @@ class App {
 
     ctx.clearRect(0, 0, w, h);
 
-    // Center zero line
-    const zeroY = h * 0.55;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    // Subtle grid lines
+    ctx.strokeStyle = '#262830';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, zeroY);
-    ctx.lineTo(w, zeroY);
+    ctx.moveTo(0, h * 0.5);
+    ctx.lineTo(w, h * 0.5);
     ctx.stroke();
 
-    // Plot CL (Cyan line)
-    ctx.strokeStyle = '#00f0ff';
-    ctx.lineWidth = 1.6;
+    // Plot CL (Muted green line)
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 1.4;
     ctx.beginPath();
     const len = this.clHistory.length;
     for (let i = 0; i < len; i++) {
       const x = (i / (len - 1)) * w;
-      const y = zeroY - this.clHistory[i] * 18;
+      const y = h * 0.5 - this.clHistory[i] * 18;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
 
     // Plot CD (Amber line)
-    ctx.strokeStyle = '#ff9f1c';
+    ctx.strokeStyle = '#f59e0b';
     ctx.lineWidth = 1.4;
     ctx.beginPath();
     for (let i = 0; i < len; i++) {
       const x = (i / (len - 1)) * w;
-      const y = zeroY - this.cdHistory[i] * 18;
+      const y = h * 0.5 - this.cdHistory[i] * 18;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
-
-    // Legend tags
-    ctx.font = '9px monospace';
-    ctx.fillStyle = '#00f0ff';
-    ctx.fillText('CL', 6, 12);
-    ctx.fillStyle = '#ff9f1c';
-    ctx.fillText('CD', 26, 12);
   }
 
   loop(timestamp) {
-    // Calculate FPS
     this.frameCount++;
     if (timestamp - this.fpsTimer >= 500) {
       this.fps = Math.round((this.frameCount * 1000) / (timestamp - this.fpsTimer));
@@ -403,15 +444,11 @@ class App {
     }
 
     if (this.isRunning) {
-      // Step aerodynamic simulation
       this.solver.step();
-      // Update procedural sound synthesis
       this.acoustics.update(this.solver);
     }
 
-    // Render Canvas
     this.render();
-
     requestAnimationFrame((t) => this.loop(t));
   }
 
@@ -421,30 +458,30 @@ class App {
     const ny = s.ny;
     const data = this.imgData.data;
 
-    // Fast pixel buffer filling based on active view mode
+    // Authentic scientific colormaps
     if (this.viewMode === 'pressure') {
-      // Bernoulli Pressure Heatmap (Blue = low pressure suction, Red = high stagnation pressure)
+      // Diverging Bernoulli Pressure Colormap (Deep blue -> neutral dark slate -> crimson)
       for (let k = 0; k < s.size; k++) {
         const pIdx = k * 4;
         if (s.solid[k]) {
-          data[pIdx] = 20;
-          data[pIdx + 1] = 24;
-          data[pIdx + 2] = 32;
+          data[pIdx] = 30;
+          data[pIdx + 1] = 32;
+          data[pIdx + 2] = 38;
           data[pIdx + 3] = 255;
         } else {
-          const val = s.p[k] * 40.0;
-          let r = 0, g = 0, b = 0;
+          const val = s.p[k] * 35.0;
+          let r = 24, g = 26, b = 32;
           if (val > 0) {
-            // High pressure (amber/red)
-            r = Math.min(255, val * 240);
-            g = Math.min(180, val * 100);
-            b = 30;
+            // High pressure (warm amber/terracotta)
+            r = Math.min(240, 24 + val * 210);
+            g = Math.min(160, 26 + val * 90);
+            b = Math.max(10, 32 - val * 20);
           } else {
-            // Low pressure (cyan/blue)
+            // Suction low pressure (cool oceanic slate)
             const neg = Math.abs(val);
-            b = Math.min(255, neg * 250);
-            g = Math.min(220, neg * 180);
-            r = 10;
+            b = Math.min(235, 32 + neg * 200);
+            g = Math.min(190, 26 + neg * 140);
+            r = Math.max(10, 24 - neg * 15);
           }
           data[pIdx] = r;
           data[pIdx + 1] = g;
@@ -453,28 +490,26 @@ class App {
         }
       }
     } else if (this.viewMode === 'vorticity') {
-      // Vorticity / Curl rotation core heatmap
+      // Vorticity Colormap: Clockwise vs Counter-Clockwise rotation
       for (let k = 0; k < s.size; k++) {
         const pIdx = k * 4;
         if (s.solid[k]) {
-          data[pIdx] = 20;
-          data[pIdx + 1] = 24;
-          data[pIdx + 2] = 32;
+          data[pIdx] = 30;
+          data[pIdx + 1] = 32;
+          data[pIdx + 2] = 38;
           data[pIdx + 3] = 255;
         } else {
-          const curl = s.vort[k] * 90.0;
-          let r = 8, g = 10, b = 16;
+          const curl = s.vort[k] * 80.0;
+          let r = 20, g = 22, b = 28;
           if (curl > 0) {
-            // Clockwise vortex: warm crimson/orange
-            r = Math.min(255, 12 + curl * 220);
-            g = Math.min(180, 10 + curl * 80);
-            b = 30;
+            r = Math.min(240, 20 + curl * 210);
+            g = Math.min(140, 22 + curl * 70);
+            b = 25;
           } else {
-            // Counter-clockwise vortex: electric cyan
             const neg = Math.abs(curl);
-            b = Math.min(255, 20 + neg * 250);
-            g = Math.min(240, 15 + neg * 200);
-            r = 10;
+            b = Math.min(235, 28 + neg * 200);
+            g = Math.min(180, 22 + neg * 130);
+            r = 20;
           }
           data[pIdx] = r;
           data[pIdx + 1] = g;
@@ -483,54 +518,50 @@ class App {
         }
       }
     } else if (this.viewMode === 'schlieren') {
-      // Schlieren optical density gradient imaging (NASA wind tunnel shadowgraph)
+      // True NASA Schlieren Knife-Edge Shadowgraph simulation
       for (let j = 0; j < ny; j++) {
         for (let i = 0; i < nx; i++) {
           const k = i + j * nx;
           const pIdx = k * 4;
           if (s.solid[k]) {
-            data[pIdx] = 16;
-            data[pIdx + 1] = 20;
+            data[pIdx] = 20;
+            data[pIdx + 1] = 22;
             data[pIdx + 2] = 26;
             data[pIdx + 3] = 255;
           } else {
-            // Spatial gradient in pressure simulates refractive index light deflection
             const nextI = Math.min(nx - 1, i + 1);
             const prevI = Math.max(0, i - 1);
-            const dp_dx = (s.p[nextI + j * nx] - s.p[prevI + j * nx]) * 450.0;
-            const intensity = Math.max(0, Math.min(255, 128 + dp_dx));
-            data[pIdx] = intensity * 0.85;
-            data[pIdx + 1] = intensity * 0.95;
+            const dp_dx = (s.p[nextI + j * nx] - s.p[prevI + j * nx]) * 420.0;
+            const intensity = Math.max(0, Math.min(255, 120 + dp_dx));
+            data[pIdx] = intensity * 0.92;
+            data[pIdx + 1] = intensity * 0.94;
             data[pIdx + 2] = intensity;
             data[pIdx + 3] = 255;
           }
         }
       }
     } else {
-      // Wind Tunnel Smoke / Dye Rake mode
+      // Realistic Wind Tunnel Smoke (Illuminated white/gray smoke against graphite background)
       for (let k = 0; k < s.size; k++) {
         const pIdx = k * 4;
         if (s.solid[k]) {
-          data[pIdx] = 18;
-          data[pIdx + 1] = 22;
-          data[pIdx + 2] = 30;
+          data[pIdx] = 26;
+          data[pIdx + 1] = 28;
+          data[pIdx + 2] = 34;
           data[pIdx + 3] = 255;
         } else {
           const smk = Math.min(1.0, s.smoke[k]);
-          const baseR = 5, baseG = 8, baseB = 14;
-          // Smoke glows in electric cyan
-          const r = Math.min(255, baseR + smk * 40);
-          const g = Math.min(255, baseG + smk * 220);
-          const b = Math.min(255, baseB + smk * 255);
-          data[pIdx] = r;
-          data[pIdx + 1] = g;
-          data[pIdx + 2] = b;
+          const base = 18;
+          // Smooth neutral smoke tone
+          const val = Math.min(255, base + smk * 195);
+          data[pIdx] = val;
+          data[pIdx + 1] = val + smk * 5;
+          data[pIdx + 2] = val + smk * 12;
           data[pIdx + 3] = 255;
         }
       }
     }
 
-    // Put image data into offscreen canvas and stretch to main viewport
     this.offscreenCtx.putImageData(this.imgData, 0, 0);
 
     const cw = this.canvas.width;
@@ -538,34 +569,66 @@ class App {
     this.ctx.imageSmoothingEnabled = true;
     this.ctx.drawImage(this.offscreenCanvas, 0, 0, cw, ch);
 
-    // Overlay Lagrangian Tracer Smoke Filaments
+    // Subtle background wind-tunnel honeycomb grid
+    this.renderTunnelGrid(cw, ch);
+
+    // Overlay Smoke Filaments or Vectors
     if (this.viewMode === 'smoke') {
-      this.renderTracerFilaments(cw, ch);
+      this.renderSmokeTracers(cw, ch);
     } else if (this.viewMode === 'vectors') {
       this.renderVelocityVectors(cw, ch);
     }
 
-    // Render solid obstacle outline with high-contrast aerospace highlight
+    // Direct manipulation handles, surface wool tufts, and force vectors
     this.renderObstacleOverlay(cw, ch);
   }
 
-  renderTracerFilaments(cw, ch) {
+  renderTunnelGrid(cw, ch) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)';
+    ctx.lineWidth = 1;
+
+    const step = 48;
+    for (let x = 0; x < cw; x += step) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, ch);
+      ctx.stroke();
+    }
+    for (let y = 0; y < ch; y += step) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(cw, y);
+      ctx.stroke();
+    }
+
+    // Left honeycomb inlet plate representation
+    ctx.fillStyle = '#1c1e24';
+    ctx.fillRect(0, 0, 6, ch);
+    ctx.fillStyle = '#2d313b';
+    for (let y = 8; y < ch; y += 12) {
+      ctx.fillRect(1, y, 4, 2);
+    }
+
+    ctx.restore();
+  }
+
+  renderSmokeTracers(cw, ch) {
     const ctx = this.ctx;
     const scaleX = cw / this.solver.nx;
     const scaleY = ch / this.solver.ny;
 
     ctx.save();
-    ctx.shadowBlur = 8;
-    ctx.shadowColor = 'rgba(0, 240, 255, 0.7)';
-
     for (let k = 0; k < this.solver.tracers.length; k++) {
       const p = this.solver.tracers[k];
       const px = p.x * scaleX;
       const py = p.y * scaleY;
-      const alpha = Math.max(0.1, 1.0 - (p.age / p.life));
+      const alpha = Math.max(0.15, 1.0 - (p.age / p.life));
 
-      ctx.fillStyle = `rgba(0, 240, 255, ${alpha * 0.75})`;
-      ctx.fillRect(px - 1.2, py - 1.2, 2.4, 2.4);
+      // Realistic illuminated white/pearl streak beads
+      ctx.fillStyle = `rgba(235, 240, 255, ${alpha * 0.7})`;
+      ctx.fillRect(px - 1, py - 1, 2, 2);
     }
     ctx.restore();
   }
@@ -578,9 +641,9 @@ class App {
     const scaleX = cw / s.nx;
     const scaleY = ch / s.ny;
 
-    ctx.strokeStyle = 'rgba(0, 240, 255, 0.45)';
-    ctx.fillStyle = 'rgba(0, 240, 255, 0.6)';
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(240, 244, 255, 0.4)';
+    ctx.fillStyle = 'rgba(240, 244, 255, 0.6)';
+    ctx.lineWidth = 1.0;
 
     for (let j = stepY; j < s.ny - stepY; j += stepY) {
       for (let i = stepX; i < s.nx - stepX; i += stepX) {
@@ -589,12 +652,12 @@ class App {
 
         const uVal = s.u[idx];
         const vVal = s.v[idx];
-        const speed = Math.sqrt(uVal * uVal + vVal * vVal);
+        const speed = Math.hypot(uVal, vVal);
         if (speed < 0.05) continue;
 
         const startX = i * scaleX;
         const startY = j * scaleY;
-        const arrowLen = Math.min(24, speed * 12);
+        const arrowLen = Math.min(20, speed * 10);
         const endX = startX + (uVal / speed) * arrowLen;
         const endY = startY + (vVal / speed) * arrowLen;
 
@@ -603,10 +666,8 @@ class App {
         ctx.lineTo(endX, endY);
         ctx.stroke();
 
-        // Arrow head
-        const angle = Math.atan2(endY - startY, endX - startX);
         ctx.beginPath();
-        ctx.arc(endX, endY, 1.5, 0, Math.PI * 2);
+        ctx.arc(endX, endY, 1.2, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -618,43 +679,112 @@ class App {
     const scaleX = cw / s.nx;
     const scaleY = ch / s.ny;
 
-    // Draw aerodynamic lift & drag vector arrows at obstacle center
     const ox = s.obstacleX * scaleX;
     const oy = s.obstacleY * scaleY;
+    const chordPx = s.chordLength * scaleX;
+    const rad = (s.angleDegrees * Math.PI) / 180.0;
 
     if (s.obstacleType !== 'custom') {
       ctx.save();
 
-      // Lift vector arrow (Green)
-      const liftLen = Math.max(-60, Math.min(60, s.cl * 28));
-      ctx.strokeStyle = '#00e676';
-      ctx.lineWidth = 2.2;
+      // 1. Interactive Chord Line & Pitch Handle
+      const hx = ox + Math.cos(rad) * chordPx;
+      const hy = oy + Math.sin(rad) * chordPx;
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.moveTo(ox, oy);
-      ctx.lineTo(ox, oy - liftLen);
+      ctx.lineTo(hx, hy);
       ctx.stroke();
+      ctx.setLineDash([]);
 
-      ctx.fillStyle = '#00e676';
-      ctx.font = '10px monospace';
-      ctx.fillText(`Lift (CL: ${s.cl.toFixed(2)})`, ox + 6, oy - liftLen);
-
-      // Drag vector arrow (Orange)
-      const dragLen = Math.max(10, Math.min(70, s.cd * 35));
-      ctx.strokeStyle = '#ff9f1c';
-      ctx.lineWidth = 2.2;
+      // Protractor Arc
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
       ctx.beginPath();
-      ctx.moveTo(ox, oy);
-      ctx.lineTo(ox + dragLen, oy);
+      const arcRad = Math.min(45, chordPx * 0.35);
+      ctx.arc(ox, oy, arcRad, 0, rad, rad < 0);
       ctx.stroke();
 
-      ctx.fillStyle = '#ff9f1c';
-      ctx.fillText(`Drag (CD: ${s.cd.toFixed(2)})`, ox + dragLen + 6, oy + 4);
-
-      // Center pivot point
+      // Trailing edge pitch handle knob
       ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#262830';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(hx, hy, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Pivot center dot
+      ctx.fillStyle = '#3b82f6';
       ctx.beginPath();
       ctx.arc(ox, oy, 3.5, 0, Math.PI * 2);
       ctx.fill();
+
+      // 2. Surface Wool Tufts (Flight Test Boundary Layer Visualizer)
+      if (s.obstacleType === 'naca0012' || s.obstacleType === 'cambered') {
+        ctx.strokeStyle = '#f3f4f6';
+        ctx.lineWidth = 1.2;
+
+        for (let i = 0; i < this.tufts.length; i++) {
+          const t = this.tufts[i];
+          const distFromLead = t.s * s.chordLength;
+          const tuftGridX = s.obstacleX + Math.cos(rad) * distFromLead;
+          const tuftGridY = s.obstacleY + Math.sin(rad) * distFromLead - 3.5;
+
+          const uLocal = s.sampleBilinear(s.u, tuftGridX, tuftGridY);
+          const vLocal = s.sampleBilinear(s.v, tuftGridX, tuftGridY);
+          const localFlowAngle = Math.atan2(vLocal, uLocal);
+
+          // Tufts flutter violently if flow reverses or stalls
+          const isReverse = uLocal < 0.2 || s.isStalled;
+          const flutter = isReverse ? (Math.random() - 0.5) * 1.4 : 0;
+          t.angle = localFlowAngle + flutter;
+
+          const tx = tuftGridX * scaleX;
+          const ty = tuftGridY * scaleY;
+          const tuftLen = 10;
+          const ex = tx + Math.cos(t.angle) * tuftLen;
+          const ey = ty + Math.sin(t.angle) * tuftLen;
+
+          ctx.beginPath();
+          ctx.moveTo(tx, ty);
+          ctx.lineTo(ex, ey);
+          ctx.stroke();
+
+          ctx.fillStyle = isReverse ? '#ef4444' : '#10b981';
+          ctx.beginPath();
+          ctx.arc(tx, ty, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // 3. Clean Aerodynamic Force Vectors
+      // Lift vector (Green)
+      const liftPx = Math.max(-65, Math.min(65, s.cl * 32));
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ox, oy - liftPx);
+      ctx.stroke();
+
+      ctx.fillStyle = '#10b981';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(`L (${s.cl.toFixed(2)})`, ox + 6, oy - liftPx - 4);
+
+      // Drag vector (Amber)
+      const dragPx = Math.max(8, Math.min(75, s.cd * 38));
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ox + dragPx, oy);
+      ctx.stroke();
+
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillText(`D (${s.cd.toFixed(2)})`, ox + dragPx + 6, oy + 4);
 
       ctx.restore();
     }
